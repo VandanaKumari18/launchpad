@@ -18,6 +18,7 @@ import { generateResumeBullets } from "@/lib/resume-bullets";
 import { generatePromotionCase } from "@/lib/promotion-case";
 import { generateInterviewQuestions } from "@/lib/interview-prep";
 import { parseFridayLogAchievements } from "@/lib/friday-log";
+import { runAgentCycleForUser, type AgentCycleResult } from "@/lib/agent-cycle";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -672,4 +673,24 @@ export async function submitFridayLog(params: {
 
   revalidatePath("/dashboard");
   return parsed;
+}
+
+/**
+ * Runs the same autonomous cycle the weekly cron runs (src/app/api/cron/
+ * weekly-agent), but for the current user only and on demand — lets you
+ * see the full agent loop execute without waiting for the schedule or
+ * deploying anywhere.
+ */
+export async function runMyAgentCycle(): Promise<AgentCycleResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const admin = createAdminClient();
+  const result = await runAgentCycleForUser(admin, user.id);
+
+  revalidatePath("/dashboard");
+  return result;
 }

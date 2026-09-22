@@ -11,6 +11,7 @@ import {
   computeBlockers,
 } from "@/lib/dashboard-data";
 import { CareerScoreCard } from "@/components/dashboard/career-score-card";
+import { AgentCycleCard } from "@/components/dashboard/agent-cycle-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -74,6 +75,8 @@ export default async function DashboardOverviewPage() {
         </p>
       </div>
 
+      <AgentCycleCard />
+
       <CareerScoreCard
         breakdown={scoreBreakdown}
         previousScore={briefs[0]?.score ?? null}
@@ -103,12 +106,42 @@ export default async function DashboardOverviewPage() {
       <div>
         <h2 className="text-lg font-medium">Quick actions</h2>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <QuickAction href="/dashboard/achievements" icon={Trophy} label="Friday Log" />
-          <QuickAction href="/dashboard/jobs" icon={Briefcase} label="Scan for Jobs" />
-          <QuickAction href="/dashboard/network" icon={Users} label="Draft Outreach" />
-          <QuickAction href="/dashboard/promotion" icon={TrendingUp} label="Promotion Case" />
-          <QuickAction href="/dashboard/skills" icon={Sparkles} label="Skill Gaps" />
-          <QuickAction href="/dashboard/briefs" icon={Mail} label="Weekly Brief" />
+          <QuickAction
+            href="/dashboard/achievements"
+            icon={Trophy}
+            label="Friday Log"
+            color="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          />
+          <QuickAction
+            href="/dashboard/jobs"
+            icon={Briefcase}
+            label="Scan for Jobs"
+            color="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"
+          />
+          <QuickAction
+            href="/dashboard/network"
+            icon={Users}
+            label="Draft Outreach"
+            color="bg-rose-500/10 text-rose-600 dark:text-rose-400"
+          />
+          <QuickAction
+            href="/dashboard/promotion"
+            icon={TrendingUp}
+            label="Promotion Case"
+            color="bg-violet-500/10 text-violet-600 dark:text-violet-400"
+          />
+          <QuickAction
+            href="/dashboard/skills"
+            icon={Sparkles}
+            label="Skill Gaps"
+            color="bg-sky-500/10 text-sky-600 dark:text-sky-400"
+          />
+          <QuickAction
+            href="/dashboard/briefs"
+            icon={Mail}
+            label="Weekly Brief"
+            color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          />
         </div>
       </div>
 
@@ -226,17 +259,21 @@ function QuickAction({
   href,
   icon: Icon,
   label,
+  color,
 }: {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  color: string;
 }) {
   return (
     <Link
       href={href}
-      className="flex flex-col items-center justify-center gap-2 rounded-md border p-4 text-center text-sm hover:bg-muted"
+      className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-card p-4 text-center text-sm shadow-sm transition-shadow hover:shadow-md"
     >
-      <Icon className="h-5 w-5" />
+      <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${color}`}>
+        <Icon className="h-4.5 w-4.5" />
+      </div>
       {label}
     </Link>
   );
