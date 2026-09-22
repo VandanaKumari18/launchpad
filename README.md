@@ -8,6 +8,17 @@ in [LAUNCHPAD-COMPLETE-README.md](./LAUNCHPAD-COMPLETE-README.md).
 
 **Live:** https://launchpad-ashen-six.vercel.app
 
+## Screenshots
+
+| | |
+|---|---|
+| **Landing** | ![Landing page](docs/screenshots/landing.png) |
+| **Dashboard** — agent decision log, career score | ![Dashboard](docs/screenshots/dashboard.png) |
+| **Job matches** — fit scoring + LinkedIn outreach links | ![Job matches](docs/screenshots/job-matches.png) |
+| **Network** — contacts + AI-drafted reconnect messages | ![Network](docs/screenshots/network.png) |
+| **Promotion case** — full readiness document | ![Promotion case](docs/screenshots/promotion-case.png) |
+| **Weekly brief** — the email that actually lands | ![Weekly brief](docs/screenshots/weekly-brief.png) |
+
 ## What's built
 
 - **Auth & onboarding** — Google OAuth via Supabase, 6-step onboarding
