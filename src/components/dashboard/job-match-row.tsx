@@ -6,10 +6,21 @@ import {
   recordJobInteraction,
   generateBulletsForJob,
   generateInterviewPrepForJob,
+  generateOutreachSuggestionsForJob,
 } from "@/app/dashboard/actions";
 
 type Bullet = { bullet_text: string; category: string };
 type Question = { question: string; sample_answer: string };
+type OutreachTarget = {
+  roleLabel: string;
+  audience: "peer" | "hiring_manager" | "recruiter";
+  searchUrl: string;
+};
+type ColdOutreachMessages = {
+  peer: string;
+  hiring_manager: string;
+  recruiter: string;
+};
 
 type JobMatchRowProps = {
   jobId: string;
@@ -22,6 +33,14 @@ type JobMatchRowProps = {
   initialAction?: string | null;
   initialBullets?: Bullet[];
   initialQuestions?: Question[];
+  initialOutreachTargets?: OutreachTarget[];
+  initialOutreachMessages?: ColdOutreachMessages;
+};
+
+const AUDIENCE_LABELS: Record<OutreachTarget["audience"], string> = {
+  peer: "People already in this role",
+  hiring_manager: "Hiring manager / decision maker",
+  recruiter: "Recruiter / talent acquisition",
 };
 
 export function JobMatchRow({
@@ -35,6 +54,8 @@ export function JobMatchRow({
   initialAction,
   initialBullets,
   initialQuestions,
+  initialOutreachTargets,
+  initialOutreachMessages,
 }: JobMatchRowProps) {
   const [action, setAction] = useState(initialAction ?? null);
   const [isPending, startTransition] = useTransition();
@@ -46,6 +67,13 @@ export function JobMatchRow({
   );
   const [isPrepping, startPrepping] = useTransition();
   const [prepError, setPrepError] = useState<string | null>(null);
+  const [outreachTargets, setOutreachTargets] = useState<OutreachTarget[]>(
+    initialOutreachTargets ?? []
+  );
+  const [outreachMessages, setOutreachMessages] =
+    useState<ColdOutreachMessages | null>(initialOutreachMessages ?? null);
+  const [isFindingContacts, startFindingContacts] = useTransition();
+  const [outreachError, setOutreachError] = useState<string | null>(null);
 
   function act(next: "save" | "dismiss" | "apply") {
     setAction(next);
@@ -81,6 +109,21 @@ export function JobMatchRow({
       } catch (e) {
         setPrepError(
           e instanceof Error ? e.message : "Failed to generate questions"
+        );
+      }
+    });
+  }
+
+  function handleFindContacts() {
+    setOutreachError(null);
+    startFindingContacts(async () => {
+      try {
+        const result = await generateOutreachSuggestionsForJob(jobId);
+        setOutreachTargets(result.targets as OutreachTarget[]);
+        setOutreachMessages(result.messages as ColdOutreachMessages);
+      } catch (e) {
+        setOutreachError(
+          e instanceof Error ? e.message : "Failed to find contacts"
         );
       }
     });
@@ -128,6 +171,43 @@ export function JobMatchRow({
         >
           Dismiss
         </Button>
+      </div>
+
+      <div className="mt-3 border-t pt-3">
+        {outreachTargets.length === 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isFindingContacts}
+            onClick={handleFindContacts}
+          >
+            {isFindingContacts
+              ? "Finding people…"
+              : "Find people to reach out to"}
+          </Button>
+        ) : (
+          <div className="space-y-3">
+            {(["peer", "hiring_manager", "recruiter"] as const).map(
+              (audience) => {
+                const targetsForAudience = outreachTargets.filter(
+                  (t) => t.audience === audience
+                );
+                if (targetsForAudience.length === 0) return null;
+                return (
+                  <OutreachGroup
+                    key={audience}
+                    label={AUDIENCE_LABELS[audience]}
+                    targets={targetsForAudience}
+                    message={outreachMessages?.[audience] ?? ""}
+                  />
+                );
+              }
+            )}
+          </div>
+        )}
+        {outreachError && (
+          <p className="mt-1 text-xs text-destructive">{outreachError}</p>
+        )}
       </div>
 
       {action === "apply" && (
@@ -190,5 +270,61 @@ export function JobMatchRow({
         </div>
       )}
     </li>
+  );
+}
+
+function OutreachGroup({
+  label,
+  targets,
+  message,
+}: {
+  label: string;
+  targets: OutreachTarget[];
+  message: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard unavailable — silently ignore
+    }
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-2.5">
+      <p className="text-xs font-semibold text-foreground">{label}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {targets.map((t) => (
+          <a
+            key={t.roleLabel}
+            href={t.searchUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-full border px-2 py-0.5 text-xs underline decoration-dotted underline-offset-2 hover:bg-muted"
+          >
+            Search &quot;{t.roleLabel}&quot; on LinkedIn
+          </a>
+        ))}
+      </div>
+      {message && (
+        <div className="mt-2">
+          <p className="whitespace-pre-wrap rounded-md border bg-background p-2 text-xs text-muted-foreground">
+            {message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-1.5 h-6 px-2 text-xs"
+            onClick={handleCopy}
+          >
+            {copied ? "Copied!" : "Copy message"}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

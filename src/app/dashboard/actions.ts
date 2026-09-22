@@ -19,6 +19,10 @@ import { generatePromotionCase } from "@/lib/promotion-case";
 import { generateInterviewQuestions } from "@/lib/interview-prep";
 import { parseFridayLogAchievements } from "@/lib/friday-log";
 import { runAgentCycleForUser, type AgentCycleResult } from "@/lib/agent-cycle";
+import {
+  buildOutreachTargets,
+  draftColdOutreachMessages,
+} from "@/lib/cold-outreach";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -498,6 +502,57 @@ export async function generateBulletsForJob(jobId: string) {
 
   revalidatePath("/dashboard");
   return bullets;
+}
+
+export async function generateOutreachSuggestionsForJob(jobId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: existing } = await supabase
+    .from("outreach_suggestions")
+    .select("targets, messages")
+    .eq("user_id", user.id)
+    .eq("job_id", jobId)
+    .maybeSingle();
+  if (existing) return existing;
+
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("title, company")
+    .eq("id", jobId)
+    .single();
+  if (!job) throw new Error("Job not found");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("name, target_role, tone_preference")
+    .eq("id", user.id)
+    .single();
+
+  const targets = buildOutreachTargets(job.title, job.company);
+  const messages = await draftColdOutreachMessages({
+    userName: profile?.name ?? null,
+    targetRole: profile?.target_role ?? null,
+    jobTitle: job.title,
+    company: job.company,
+    tonePreference: profile?.tone_preference ?? null,
+  });
+
+  await supabase.from("outreach_suggestions").upsert(
+    {
+      user_id: user.id,
+      job_id: jobId,
+      targets,
+      messages,
+    },
+    { onConflict: "user_id,job_id" }
+  );
+
+  revalidatePath("/dashboard");
+  return { targets, messages };
 }
 
 export async function createPromotionCase(params: {

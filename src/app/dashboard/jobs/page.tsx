@@ -4,6 +4,7 @@ import {
   getJobInteractions,
   getResumeBulletsByJob,
   getInterviewPrepByJob,
+  getOutreachSuggestionsByJob,
   getLatestActionByJob,
   computeBlockers,
 } from "@/lib/dashboard-data";
@@ -16,13 +17,19 @@ export default async function JobsPage() {
   const { supabase, user } = await getUserAndProfile();
   if (!user) return null;
 
-  const [jobMatches, jobInteractions, bulletsByJob, questionsByJob] =
-    await Promise.all([
-      getJobMatches(supabase, user.id),
-      getJobInteractions(supabase, user.id),
-      getResumeBulletsByJob(supabase, user.id),
-      getInterviewPrepByJob(supabase, user.id),
-    ]);
+  const [
+    jobMatches,
+    jobInteractions,
+    bulletsByJob,
+    questionsByJob,
+    outreachByJob,
+  ] = await Promise.all([
+    getJobMatches(supabase, user.id),
+    getJobInteractions(supabase, user.id),
+    getResumeBulletsByJob(supabase, user.id),
+    getInterviewPrepByJob(supabase, user.id),
+    getOutreachSuggestionsByJob(supabase, user.id),
+  ]);
 
   const latestActionByJob = getLatestActionByJob(jobInteractions);
   const blockerPatterns = computeBlockers(jobInteractions);
@@ -78,6 +85,8 @@ export default async function JobsPage() {
               initialAction={latestActionByJob.get(m.job_id) ?? null}
               initialBullets={bulletsByJob.get(m.job_id) ?? []}
               initialQuestions={questionsByJob.get(m.job_id) ?? []}
+              initialOutreachTargets={outreachByJob.get(m.job_id)?.targets}
+              initialOutreachMessages={outreachByJob.get(m.job_id)?.messages}
             />
           ))}
         </ul>

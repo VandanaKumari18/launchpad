@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { computeCareerScore } from "@/lib/career-score";
 import { detectBlockerPatterns } from "@/lib/blocker-patterns";
+import type { OutreachTarget, ColdOutreachMessages } from "@/lib/cold-outreach";
 
 export async function getUserAndProfile() {
   const supabase = await createClient();
@@ -137,6 +138,32 @@ export async function getInterviewPrepByJob(
     const list = byJob.get(q.job_id) ?? [];
     list.push({ question: q.question, sample_answer: q.sample_answer ?? "" });
     byJob.set(q.job_id, list);
+  }
+  return byJob;
+}
+
+export async function getOutreachSuggestionsByJob(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+) {
+  const { data } = await supabase
+    .from("outreach_suggestions")
+    .select("job_id, targets, messages")
+    .eq("user_id", userId);
+
+  const byJob = new Map<
+    string,
+    { targets: OutreachTarget[]; messages: ColdOutreachMessages }
+  >();
+  for (const row of data ?? []) {
+    byJob.set(row.job_id, {
+      targets: (row.targets as OutreachTarget[]) ?? [],
+      messages: (row.messages as ColdOutreachMessages) ?? {
+        peer: "",
+        hiring_manager: "",
+        recruiter: "",
+      },
+    });
   }
   return byJob;
 }

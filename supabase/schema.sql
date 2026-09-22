@@ -200,6 +200,16 @@ create table if not exists interview_prep (
   created_at timestamptz not null default now()
 );
 
+create table if not exists outreach_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users (id) on delete cascade,
+  job_id uuid not null references jobs (id) on delete cascade,
+  targets jsonb,
+  messages jsonb,
+  created_at timestamptz not null default now(),
+  unique (user_id, job_id)
+);
+
 create table if not exists briefs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users (id) on delete cascade,
@@ -219,6 +229,7 @@ alter table network_nudges enable row level security;
 alter table promotion_cases enable row level security;
 alter table resume_bullets enable row level security;
 alter table interview_prep enable row level security;
+alter table outreach_suggestions enable row level security;
 alter table briefs enable row level security;
 
 create policy "Users manage own achievements" on achievements for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -230,6 +241,7 @@ create policy "Users manage own network nudges" on network_nudges for all using 
 create policy "Users manage own promotion cases" on promotion_cases for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users manage own resume bullets" on resume_bullets for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users manage own interview prep" on interview_prep for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users manage own outreach suggestions" on outreach_suggestions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users view own briefs" on briefs for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- jobs table is shared reference data, not user-owned: readable by any
