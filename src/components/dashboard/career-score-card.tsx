@@ -16,9 +16,13 @@ const LABELS: Record<keyof Omit<CareerScoreBreakdown, "overall">, string> = {
 
 export function CareerScoreCard({
   breakdown,
+  previousScore,
 }: {
   breakdown: CareerScoreBreakdown;
+  previousScore?: number | null;
 }) {
+  const delta =
+    previousScore != null ? breakdown.overall - previousScore : null;
   const [explanation, setExplanation] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +44,19 @@ export function CareerScoreCard({
       <CardContent className="pt-6">
         <div className="flex items-baseline justify-between">
           <h2 className="text-lg font-medium">Career Score</h2>
-          <span className="text-3xl font-semibold">{breakdown.overall}/100</span>
+          <span className="text-3xl font-semibold">
+            {breakdown.overall}/100
+            {delta != null && delta !== 0 && (
+              <span
+                className={
+                  "ml-2 text-base font-normal " +
+                  (delta > 0 ? "text-green-600" : "text-red-600")
+                }
+              >
+                {delta > 0 ? `↑${delta}` : `↓${Math.abs(delta)}`}
+              </span>
+            )}
+          </span>
         </div>
 
         <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">

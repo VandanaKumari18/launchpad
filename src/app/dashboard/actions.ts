@@ -8,6 +8,12 @@ import { computeCareerScore } from "@/lib/career-score";
 import { createGroqClient, GROQ_MODEL } from "@/lib/groq";
 import { analyzeSkillGaps } from "@/lib/skill-gaps";
 import { draftOutreachMessage } from "@/lib/network-nudges";
+import { detectBlockerPatterns } from "@/lib/blocker-patterns";
+import { createResendClient, BRIEF_FROM_ADDRESS } from "@/lib/resend";
+import {
+  buildWeeklyBriefHtml,
+  weeklyBriefSubject,
+} from "@/lib/weekly-brief";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -311,6 +317,139 @@ export async function updateNudgeStatus(
     .eq("user_id", user.id);
 
   if (error) throw new Error(`Failed to update nudge: ${error.message}`);
+
+  revalidatePath("/dashboard");
+}
+
+export async function sendWeeklyBrief() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user || !user.email) throw new Error("Not authenticated");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select(
+      "name, target_role, timeline, years_experience, skills_list, network_contacts"
+    )
+    .eq("id", user.id)
+    .single();
+
+  const { data: achievements } = await supabase
+    .from("achievements")
+    .select("id")
+    .eq("user_id", user.id);
+
+  const { data: jobMatches } = await supabase
+    .from("job_matches")
+    .select("*, jobs(*)")
+    .eq("user_id", user.id)
+    .order("match_percent", { ascending: false });
+
+  const { data: skillGaps } = await supabase
+    .from("skill_gaps")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("prevalence", { ascending: false });
+
+  const { data: pendingNudges } = await supabase
+    .from("network_nudges")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("status", "pending");
+
+  const { data: jobInteractions } = await supabase
+    .from("job_interactions")
+    .select("action, jobs(location)")
+    .eq("user_id", user.id);
+
+  const avgMatch = jobMatches?.length
+    ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
+      jobMatches.length
+    : null;
+
+  const score = computeCareerScore({
+    achievementCount: achievements?.length ?? 0,
+    avgJobMatchPercent: avgMatch,
+    networkContactCount: Array.isArray(profile?.network_contacts)
+      ? profile.network_contacts.length
+      : 0,
+    skillsCount: Array.isArray(profile?.skills_list)
+      ? profile.skills_list.length
+      : 0,
+    hasTimeline: Boolean(profile?.timeline),
+    hasYearsExperience: profile?.years_experience != null,
+  });
+
+  const { data: lastBrief } = await supabase
+    .from("briefs")
+    .select("score")
+    .eq("user_id", user.id)
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const blockerPatterns = detectBlockerPatterns(
+    (jobInteractions ?? []).map((i) => ({
+      action: i.action,
+      location:
+        (i.jobs as unknown as { location: string } | null)?.location ?? "",
+    }))
+  );
+
+  const weekOf = new Date().toISOString().slice(0, 10);
+
+  const html = buildWeeklyBriefHtml({
+    userName: profile?.name ?? null,
+    targetRole: profile?.target_role ?? null,
+    timeline: profile?.timeline ?? null,
+    score,
+    previousScore: lastBrief?.score ?? null,
+    topJobMatches: (jobMatches ?? []).slice(0, 2).map((m) => ({
+      title: m.jobs?.title ?? "Untitled role",
+      company: m.jobs?.company ?? "Unknown",
+      matchPercent: m.match_percent ?? 0,
+      reasoning: m.reasoning ?? "",
+      url: m.jobs?.url ?? "#",
+    })),
+    pendingNudges: (pendingNudges ?? []).slice(0, 2).map((n) => ({
+      contactName: n.contact_name,
+      suggestedMessage: n.suggested_message ?? "",
+    })),
+    blockerPatterns,
+    skillGaps: (skillGaps ?? []).map((g) => ({
+      skillName: g.skill_name,
+      prevalence: g.prevalence ?? 0,
+    })),
+    activity: {
+      jobsScanned: jobMatches?.length ?? 0,
+      matchesFound: jobMatches?.length ?? 0,
+      skillGapsFound: skillGaps?.length ?? 0,
+      nudgesDrafted: pendingNudges?.length ?? 0,
+      achievementsLogged: achievements?.length ?? 0,
+    },
+  });
+
+  const resend = createResendClient();
+  const { error: sendError } = await resend.emails.send({
+    from: BRIEF_FROM_ADDRESS,
+    to: user.email,
+    subject: weeklyBriefSubject(weekOf),
+    html,
+  });
+
+  if (sendError) {
+    throw new Error(`Failed to send email: ${sendError.message}`);
+  }
+
+  await supabase.from("briefs").insert({
+    user_id: user.id,
+    week_of: weekOf,
+    score: score.overall,
+    email_html: html,
+    sent_at: new Date().toISOString(),
+  });
 
   revalidatePath("/dashboard");
 }

@@ -4,6 +4,7 @@ import {
   findJobMatches,
   detectSkillGaps,
   generateNetworkNudges,
+  sendWeeklyBrief,
 } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
 import { computeCareerScore } from "@/lib/career-score";
@@ -74,6 +75,12 @@ export default async function DashboardPage() {
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
+  const { data: briefs } = await supabase
+    .from("briefs")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("sent_at", { ascending: false });
+
   const avgMatch = jobMatches?.length
     ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
       jobMatches.length
@@ -102,7 +109,10 @@ export default async function DashboardPage() {
       </p>
 
       <div className="mt-6">
-        <CareerScoreCard breakdown={scoreBreakdown} />
+        <CareerScoreCard
+          breakdown={scoreBreakdown}
+          previousScore={briefs?.[0]?.score ?? null}
+        />
       </div>
 
       <h2 className="mt-8 text-lg font-medium">
@@ -249,10 +259,36 @@ export default async function DashboardPage() {
         </ul>
       )}
 
-      <p className="mt-8 text-sm text-muted-foreground">
-        This is a placeholder. The weekly brief email lands in a later phase
-        of the build.
-      </p>
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-lg font-medium">
+          Weekly Brief {briefs?.length ? `(${briefs.length} sent)` : ""}
+        </h2>
+        <form action={sendWeeklyBrief}>
+          <Button type="submit" size="sm">
+            Send weekly brief now
+          </Button>
+        </form>
+      </div>
+      {!briefs?.length ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          None sent yet. Click &quot;Send weekly brief now&quot; to email
+          yourself the full career brief.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {briefs.map((b) => (
+            <li
+              key={b.id}
+              className="flex items-center justify-between rounded-md border p-3 text-sm"
+            >
+              <span>Week of {b.week_of}</span>
+              <span className="text-muted-foreground">
+                Score: {b.score}/100
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </main>
   );
 }
