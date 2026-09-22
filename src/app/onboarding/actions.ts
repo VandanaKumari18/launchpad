@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { processResumeUpload } from "@/lib/resume-upload";
 import { redirect } from "next/navigation";
 
 function splitList(value: FormDataEntryValue | null): string[] {
@@ -67,24 +68,11 @@ export async function completeOnboarding(formData: FormData) {
 
   const resume = formData.get("resume");
   if (resume instanceof File && resume.size > 0) {
-    const path = `${user.id}/${Date.now()}-${resume.name}`;
-    const { error: uploadError } = await supabase.storage
-      .from("resumes")
-      .upload(path, resume, { contentType: resume.type });
-
-    if (uploadError) {
-      throw new Error(`Failed to upload resume: ${uploadError.message}`);
+    try {
+      await processResumeUpload(supabase, user.id, resume);
+    } catch (error) {
+      console.error("Resume upload/parsing failed", error);
     }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("resumes").getPublicUrl(path);
-
-    await supabase.from("resumes").insert({
-      user_id: user.id,
-      file_url: publicUrl,
-      parsed_text: null,
-    });
   }
 
   redirect("/dashboard");
