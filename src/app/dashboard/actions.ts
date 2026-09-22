@@ -6,6 +6,7 @@ import { searchJobs } from "@/lib/adzuna";
 import { scoreJobMatch } from "@/lib/job-matching";
 import { computeCareerScore } from "@/lib/career-score";
 import { createGroqClient, GROQ_MODEL } from "@/lib/groq";
+import { analyzeSkillGaps } from "@/lib/skill-gaps";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -155,4 +156,75 @@ Timeline status: ${breakdown.timelineStatus}/100`,
     "No explanation available right now.";
 
   return { breakdown, explanation };
+}
+
+export async function recordJobInteraction(
+  jobId: string,
+  action: "save" | "dismiss" | "apply"
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { error } = await supabase.from("job_interactions").insert({
+    user_id: user.id,
+    job_id: jobId,
+    action,
+  });
+
+  if (error) throw new Error(`Failed to record interaction: ${error.message}`);
+
+  revalidatePath("/dashboard");
+}
+
+export async function detectSkillGaps() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("skills_list")
+    .eq("id", user.id)
+    .single();
+
+  const { data: jobMatches } = await supabase
+    .from("job_matches")
+    .select("jobs(description)")
+    .eq("user_id", user.id);
+
+  const descriptions = (jobMatches ?? [])
+    .map(
+      (m) => (m.jobs as unknown as { description: string } | null)?.description
+    )
+    .filter((d): d is string => Boolean(d));
+
+  if (descriptions.length === 0) {
+    throw new Error("Scan for jobs first so there's data to analyze");
+  }
+
+  const gaps = await analyzeSkillGaps(
+    Array.isArray(profile?.skills_list) ? profile.skills_list : [],
+    descriptions
+  );
+
+  await supabase.from("skill_gaps").delete().eq("user_id", user.id);
+
+  if (gaps.length > 0) {
+    await supabase.from("skill_gaps").insert(
+      gaps.map((g) => ({
+        user_id: user.id,
+        skill_name: g.skill_name,
+        user_level: g.user_level,
+        required_level: g.required_level,
+        prevalence: g.prevalence,
+      }))
+    );
+  }
+
+  revalidatePath("/dashboard");
 }

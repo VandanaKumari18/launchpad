@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { findJobMatches } from "@/app/dashboard/actions";
+import { findJobMatches, detectSkillGaps } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
 import { computeCareerScore } from "@/lib/career-score";
 import { CareerScoreCard } from "@/components/dashboard/career-score-card";
+import { JobMatchRow } from "@/components/dashboard/job-match-row";
+import { detectBlockerPatterns } from "@/lib/blocker-patterns";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -36,6 +38,30 @@ export default async function DashboardPage() {
     .select("*, jobs(*)")
     .eq("user_id", user.id)
     .order("match_percent", { ascending: false });
+
+  const { data: skillGaps } = await supabase
+    .from("skill_gaps")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("prevalence", { ascending: false });
+
+  const { data: jobInteractions } = await supabase
+    .from("job_interactions")
+    .select("action, job_id, jobs(location)")
+    .eq("user_id", user.id);
+
+  const latestActionByJob = new Map<string, string>();
+  for (const i of jobInteractions ?? []) {
+    latestActionByJob.set(i.job_id, i.action);
+  }
+
+  const blockerPatterns = detectBlockerPatterns(
+    (jobInteractions ?? []).map((i) => ({
+      action: i.action,
+      location:
+        (i.jobs as unknown as { location: string } | null)?.location ?? "",
+    }))
+  );
 
   const avgMatch = jobMatches?.length
     ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
@@ -116,23 +142,66 @@ export default async function DashboardPage() {
       ) : (
         <ul className="mt-3 space-y-3">
           {jobMatches.map((m) => (
-            <li key={m.id} className="rounded-md border p-3 text-sm">
+            <JobMatchRow
+              key={m.id}
+              jobId={m.job_id}
+              title={m.jobs?.title ?? "Untitled role"}
+              company={m.jobs?.company ?? "Unknown"}
+              location={m.jobs?.location ?? ""}
+              url={m.jobs?.url ?? "#"}
+              matchPercent={m.match_percent ?? 0}
+              reasoning={m.reasoning ?? ""}
+              initialAction={latestActionByJob.get(m.job_id) ?? null}
+            />
+          ))}
+        </ul>
+      )}
+
+      {blockerPatterns.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-medium">Patterns noticed</h2>
+          <ul className="mt-3 space-y-2">
+            {blockerPatterns.map((p) => (
+              <li
+                key={p.pattern}
+                className="rounded-md border border-yellow-600/30 bg-yellow-600/5 p-3 text-sm"
+              >
+                <span className="font-medium">{p.pattern}.</span>{" "}
+                <span className="text-muted-foreground">{p.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-lg font-medium">
+          Skill Gaps {skillGaps?.length ? `(${skillGaps.length})` : ""}
+        </h2>
+        <form action={detectSkillGaps}>
+          <Button type="submit" size="sm" variant="outline">
+            Detect skill gaps
+          </Button>
+        </form>
+      </div>
+      {!skillGaps?.length ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {jobMatches?.length
+            ? "No gaps detected — your listed skills already cover what these postings mention, or the postings didn't have enough detail to tell."
+            : "Scan for jobs first, then click “Detect skill gaps” to compare your skills against what those postings ask for."}
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {skillGaps.map((g) => (
+            <li key={g.id} className="rounded-md border p-3 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <a
-                  href={m.jobs?.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-medium underline"
-                >
-                  {m.jobs?.title} — {m.jobs?.company}
-                </a>
+                <span className="font-medium">{g.skill_name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  Match: {m.match_percent}%
+                  {g.prevalence}% of postings
                 </span>
               </div>
-              <p className="mt-1 text-muted-foreground">{m.jobs?.location}</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {m.reasoning}
+                You: {g.user_level} · Required: {g.required_level}
               </p>
             </li>
           ))}
@@ -140,7 +209,7 @@ export default async function DashboardPage() {
       )}
 
       <p className="mt-8 text-sm text-muted-foreground">
-        This is a placeholder. Career score and the weekly brief land in
+        This is a placeholder. Network nudges and the weekly brief land in
         later phases of the build.
       </p>
     </main>
