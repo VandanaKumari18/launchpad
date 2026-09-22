@@ -505,6 +505,7 @@ export async function createPromotionCase(params: {
   targetRole: string;
   timeline: string;
   internalJobDescription: string;
+  evaluationPeriodEnd?: string;
 }) {
   const supabase = await createClient();
   const {
@@ -522,17 +523,41 @@ export async function createPromotionCase(params: {
     .eq("id", user.id)
     .single();
 
-  const { data: achievements } = await supabase
+  const cutoff = params.evaluationPeriodEnd
+    ? `${params.evaluationPeriodEnd}T23:59:59Z`
+    : null;
+
+  let achievementsQuery = supabase
     .from("achievements")
-    .select("title, description")
-    .eq("user_id", user.id);
+    .select("title, description, impact_metric, impact_number, category, created_at")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: true });
+  if (cutoff) achievementsQuery = achievementsQuery.lte("created_at", cutoff);
+  const { data: achievements } = await achievementsQuery;
+
+  let fridayLogsQuery = supabase
+    .from("friday_logs")
+    .select("week_of, achievement, leadership, impact")
+    .eq("user_id", user.id)
+    .order("week_of", { ascending: true });
+  if (params.evaluationPeriodEnd)
+    fridayLogsQuery = fridayLogsQuery.lte("week_of", params.evaluationPeriodEnd);
+  const { data: fridayLogs } = await fridayLogsQuery;
+
+  if (!achievements?.length && !fridayLogs?.length) {
+    throw new Error(
+      "No achievements or Friday logs on file yet — log some evidence first"
+    );
+  }
 
   const result = await generatePromotionCase({
     achievements: achievements ?? [],
+    fridayLogs: fridayLogs ?? [],
     currentRole: profile?.current_job_title ?? null,
     company: params.company,
     targetRole: params.targetRole,
     timeline: params.timeline,
+    evaluationPeriodEnd: params.evaluationPeriodEnd ?? null,
     internalJobDescription: params.internalJobDescription,
   });
 
@@ -547,6 +572,8 @@ export async function createPromotionCase(params: {
       gaps: result.gaps,
       timeline_recommendation: result.timeline_recommendation,
       email_template: result.email_template,
+      evaluation_period_end: params.evaluationPeriodEnd || null,
+      detailed_document: result.document,
       status: "draft",
     })
     .select()

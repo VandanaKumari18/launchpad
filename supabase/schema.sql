@@ -174,6 +174,8 @@ create table if not exists promotion_cases (
   timeline_recommendation text,
   email_template text,
   status text default 'draft' check (status in ('draft', 'sent', 'accepted', 'rejected')),
+  evaluation_period_end date,
+  detailed_document jsonb,
   created_at timestamptz not null default now()
 );
 
