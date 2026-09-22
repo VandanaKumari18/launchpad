@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { findJobMatches } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
+import { computeCareerScore } from "@/lib/career-score";
+import { CareerScoreCard } from "@/components/dashboard/career-score-card";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -35,6 +37,24 @@ export default async function DashboardPage() {
     .eq("user_id", user.id)
     .order("match_percent", { ascending: false });
 
+  const avgMatch = jobMatches?.length
+    ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
+      jobMatches.length
+    : null;
+
+  const scoreBreakdown = computeCareerScore({
+    achievementCount: achievements?.length ?? 0,
+    avgJobMatchPercent: avgMatch,
+    networkContactCount: Array.isArray(profile.network_contacts)
+      ? profile.network_contacts.length
+      : 0,
+    skillsCount: Array.isArray(profile.skills_list)
+      ? profile.skills_list.length
+      : 0,
+    hasTimeline: Boolean(profile.timeline),
+    hasYearsExperience: profile.years_experience != null,
+  });
+
   return (
     <main className="mx-auto max-w-xl py-10">
       <h1 className="text-2xl font-semibold">
@@ -43,6 +63,10 @@ export default async function DashboardPage() {
       <p className="mt-2 text-muted-foreground">
         Goal: {profile.target_role ?? "not set"} · {profile.timeline ?? "no timeline set"}
       </p>
+
+      <div className="mt-6">
+        <CareerScoreCard breakdown={scoreBreakdown} />
+      </div>
 
       <h2 className="mt-8 text-lg font-medium">
         Achievements {achievements?.length ? `(${achievements.length})` : ""}
