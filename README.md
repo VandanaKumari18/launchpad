@@ -6,7 +6,7 @@ emails you a weekly brief — and decides for itself, each cycle, which of
 those to actually do based on your current state. Full original product spec
 in [LAUNCHPAD-COMPLETE-README.md](./LAUNCHPAD-COMPLETE-README.md).
 
-**Live:** _(add your Vercel URL here after deploying)_
+**Live:** https://launchpad-ashen-six.vercel.app
 
 ## What's built
 
