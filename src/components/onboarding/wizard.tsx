@@ -41,9 +41,21 @@ export function OnboardingWizard({ defaultEmail }: { defaultEmail: string }) {
       try {
         await completeOnboarding(formData);
       } catch (e) {
-        if (e instanceof Error && e.message !== "NEXT_REDIRECT") {
-          setError(e.message);
+        // redirect() throws internally, identified by a "NEXT_REDIRECT" digest
+        // (not e.message) — rethrow so Next's router can still perform the
+        // navigation instead of swallowing it as a real error.
+        if (
+          e &&
+          typeof e === "object" &&
+          "digest" in e &&
+          typeof e.digest === "string" &&
+          e.digest.startsWith("NEXT_REDIRECT")
+        ) {
+          throw e;
         }
+        setError(
+          e instanceof Error ? e.message : "Failed to save onboarding data"
+        );
       }
     });
   }
