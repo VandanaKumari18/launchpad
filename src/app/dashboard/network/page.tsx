@@ -2,13 +2,17 @@ import { getUserAndProfile, getNetworkNudges } from "@/lib/dashboard-data";
 import { generateNetworkNudges } from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
 import { NetworkNudgeRow } from "@/components/dashboard/network-nudge-row";
+import { NetworkContactsManager } from "@/components/dashboard/network-contacts-manager";
 import { Users } from "lucide-react";
 
 export default async function NetworkPage() {
-  const { supabase, user } = await getUserAndProfile();
+  const { supabase, user, profile } = await getUserAndProfile();
   if (!user) return null;
 
   const networkNudges = await getNetworkNudges(supabase, user.id);
+  const contacts = Array.isArray(profile?.network_contacts)
+    ? profile.network_contacts
+    : [];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -20,17 +24,22 @@ export default async function NetworkPage() {
             can help your career.
           </p>
         </div>
-        <form action={generateNetworkNudges}>
-          <Button type="submit">Draft outreach</Button>
-        </form>
+        {contacts.length > 0 && (
+          <form action={generateNetworkNudges}>
+            <Button type="submit">Draft outreach</Button>
+          </form>
+        )}
       </div>
+
+      <NetworkContactsManager initialContacts={contacts} />
 
       {networkNudges.length === 0 ? (
         <div className="mt-8 flex flex-col items-center gap-3 rounded-lg border border-dashed py-16 text-center">
           <Users className="h-8 w-8 text-muted-foreground" />
           <p className="text-muted-foreground">
-            None yet. Add contacts during onboarding, then click &quot;Draft
-            outreach&quot; to get AI-drafted reconnect messages.
+            {contacts.length === 0
+              ? "Add a contact above, then click \"Draft outreach\" to get AI-drafted reconnect messages."
+              : "No outreach drafted yet. Click \"Draft outreach\" above to generate reconnect messages."}
           </p>
         </div>
       ) : (

@@ -247,6 +247,75 @@ export async function detectSkillGaps() {
 
 type NetworkContact = { name: string; linkedin_url?: string };
 
+export async function addNetworkContact(formData: FormData) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const name = formData.get("name")?.toString().trim();
+  if (!name) throw new Error("Name is required");
+  const linkedinUrl = formData.get("linkedin_url")?.toString().trim();
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("network_contacts")
+    .eq("id", user.id)
+    .single();
+
+  const contacts: NetworkContact[] = Array.isArray(profile?.network_contacts)
+    ? profile.network_contacts
+    : [];
+
+  if (contacts.some((c) => c.name === name)) {
+    throw new Error(`${name} is already in your network`);
+  }
+
+  const updated: NetworkContact[] = [
+    ...contacts,
+    { name, linkedin_url: linkedinUrl || undefined },
+  ];
+
+  const { error } = await supabase
+    .from("users")
+    .update({ network_contacts: updated })
+    .eq("id", user.id);
+  if (error) throw new Error(`Failed to add contact: ${error.message}`);
+
+  revalidatePath("/dashboard");
+  return updated;
+}
+
+export async function removeNetworkContact(name: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("network_contacts")
+    .eq("id", user.id)
+    .single();
+
+  const contacts: NetworkContact[] = Array.isArray(profile?.network_contacts)
+    ? profile.network_contacts
+    : [];
+
+  const updated = contacts.filter((c) => c.name !== name);
+
+  const { error } = await supabase
+    .from("users")
+    .update({ network_contacts: updated })
+    .eq("id", user.id);
+  if (error) throw new Error(`Failed to remove contact: ${error.message}`);
+
+  revalidatePath("/dashboard");
+  return updated;
+}
+
 export async function generateNetworkNudges() {
   const supabase = await createClient();
   const {
