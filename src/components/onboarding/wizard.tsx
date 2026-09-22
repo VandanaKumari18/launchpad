@@ -37,6 +37,26 @@ export function OnboardingWizard({ defaultEmail }: { defaultEmail: string }) {
 
   function handleSubmit(formData: FormData) {
     setError(null);
+
+    // The browser's native `required` validation can't be trusted here: every
+    // step's fields live in one <form> at once (inactive steps are just
+    // display:none, not type="hidden"), so an invalid value left behind on a
+    // step you've already passed silently blocks submission with no visible
+    // feedback. We validate the fields that actually matter ourselves instead
+    // (see the `noValidate` on the <form>).
+    const name = formData.get("name")?.toString().trim();
+    if (!name) {
+      setError("Please enter your name.");
+      setStep(0);
+      return;
+    }
+    const email = formData.get("email")?.toString().trim();
+    if (!email) {
+      setError("Please enter your email.");
+      setStep(STEPS.length - 1);
+      return;
+    }
+
     startTransition(async () => {
       try {
         await completeOnboarding(formData);
@@ -71,7 +91,7 @@ export function OnboardingWizard({ defaultEmail }: { defaultEmail: string }) {
 
       <Card>
         <CardContent className="pt-6">
-          <form action={handleSubmit} className="space-y-4">
+          <form action={handleSubmit} noValidate className="space-y-4">
             {/* Step 1: Who are you? */}
             <div className={step === 0 ? "space-y-4" : "hidden"}>
               <Field label="Name" name="name" required={step === 0} />
