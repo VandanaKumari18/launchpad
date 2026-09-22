@@ -7,6 +7,7 @@ import { scoreJobMatch } from "@/lib/job-matching";
 import { computeCareerScore } from "@/lib/career-score";
 import { createGroqClient, GROQ_MODEL } from "@/lib/groq";
 import { analyzeSkillGaps } from "@/lib/skill-gaps";
+import { draftOutreachMessage } from "@/lib/network-nudges";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -225,6 +226,91 @@ export async function detectSkillGaps() {
       }))
     );
   }
+
+  revalidatePath("/dashboard");
+}
+
+type NetworkContact = { name: string; linkedin_url?: string };
+
+export async function generateNetworkNudges() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("name, target_role, timeline, tone_preference, network_contacts")
+    .eq("id", user.id)
+    .single();
+
+  const contacts: NetworkContact[] = Array.isArray(profile?.network_contacts)
+    ? profile.network_contacts
+    : [];
+
+  if (contacts.length === 0) {
+    throw new Error("Add network contacts in onboarding first");
+  }
+
+  const { data: existing } = await supabase
+    .from("network_nudges")
+    .select("contact_name")
+    .eq("user_id", user.id);
+  const existingNames = new Set((existing ?? []).map((n) => n.contact_name));
+
+  const newContacts = contacts.filter(
+    (c) => c.name && !existingNames.has(c.name)
+  );
+
+  for (const contact of newContacts) {
+    try {
+      const message = await draftOutreachMessage({
+        contactName: contact.name,
+        userName: profile?.name ?? null,
+        targetRole: profile?.target_role ?? null,
+        timeline: profile?.timeline ?? null,
+        tonePreference: profile?.tone_preference ?? null,
+      });
+
+      await supabase.from("network_nudges").insert({
+        user_id: user.id,
+        contact_name: contact.name,
+        contact_url: contact.linkedin_url ?? null,
+        suggested_message: message,
+        status: "pending",
+      });
+    } catch (error) {
+      console.error("Failed to draft outreach message", error);
+    }
+  }
+
+  revalidatePath("/dashboard");
+}
+
+export async function updateNudgeStatus(
+  nudgeId: string,
+  status: "sent" | "skipped"
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const update: Record<string, unknown> = { status };
+  if (status === "sent") {
+    update.last_contacted = new Date().toISOString().slice(0, 10);
+    update.days_since = 0;
+  }
+
+  const { error } = await supabase
+    .from("network_nudges")
+    .update(update)
+    .eq("id", nudgeId)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(`Failed to update nudge: ${error.message}`);
 
   revalidatePath("/dashboard");
 }

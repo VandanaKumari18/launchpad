@@ -1,10 +1,15 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { findJobMatches, detectSkillGaps } from "@/app/dashboard/actions";
+import {
+  findJobMatches,
+  detectSkillGaps,
+  generateNetworkNudges,
+} from "@/app/dashboard/actions";
 import { Button } from "@/components/ui/button";
 import { computeCareerScore } from "@/lib/career-score";
 import { CareerScoreCard } from "@/components/dashboard/career-score-card";
 import { JobMatchRow } from "@/components/dashboard/job-match-row";
+import { NetworkNudgeRow } from "@/components/dashboard/network-nudge-row";
 import { detectBlockerPatterns } from "@/lib/blocker-patterns";
 
 export default async function DashboardPage() {
@@ -62,6 +67,12 @@ export default async function DashboardPage() {
         (i.jobs as unknown as { location: string } | null)?.location ?? "",
     }))
   );
+
+  const { data: networkNudges } = await supabase
+    .from("network_nudges")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
 
   const avgMatch = jobMatches?.length
     ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
@@ -208,9 +219,39 @@ export default async function DashboardPage() {
         </ul>
       )}
 
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-lg font-medium">
+          Your Network {networkNudges?.length ? `(${networkNudges.length})` : ""}
+        </h2>
+        <form action={generateNetworkNudges}>
+          <Button type="submit" size="sm" variant="outline">
+            Draft outreach
+          </Button>
+        </form>
+      </div>
+      {!networkNudges?.length ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          None yet. Add contacts during onboarding, then click &quot;Draft
+          outreach&quot; to get AI-drafted reconnect messages.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-3">
+          {networkNudges.map((n) => (
+            <NetworkNudgeRow
+              key={n.id}
+              nudgeId={n.id}
+              contactName={n.contact_name}
+              contactUrl={n.contact_url}
+              suggestedMessage={n.suggested_message ?? ""}
+              status={n.status}
+            />
+          ))}
+        </ul>
+      )}
+
       <p className="mt-8 text-sm text-muted-foreground">
-        This is a placeholder. Network nudges and the weekly brief land in
-        later phases of the build.
+        This is a placeholder. The weekly brief email lands in a later phase
+        of the build.
       </p>
     </main>
   );

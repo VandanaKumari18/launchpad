@@ -159,7 +159,8 @@ create table if not exists network_nudges (
   days_since int,
   suggested_message text,
   status text default 'pending' check (status in ('pending', 'sent', 'skipped')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (user_id, contact_name)
 );
 
 create table if not exists promotion_cases (
