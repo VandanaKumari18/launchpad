@@ -61,6 +61,21 @@ export default async function DashboardPage() {
     latestActionByJob.set(i.job_id, i.action);
   }
 
+  const { data: resumeBullets } = await supabase
+    .from("resume_bullets")
+    .select("job_id, bullet_text, category")
+    .eq("user_id", user.id);
+
+  const bulletsByJob = new Map<
+    string,
+    { bullet_text: string; category: string }[]
+  >();
+  for (const b of resumeBullets ?? []) {
+    const list = bulletsByJob.get(b.job_id) ?? [];
+    list.push({ bullet_text: b.bullet_text, category: b.category });
+    bulletsByJob.set(b.job_id, list);
+  }
+
   const blockerPatterns = detectBlockerPatterns(
     (jobInteractions ?? []).map((i) => ({
       action: i.action,
@@ -173,6 +188,7 @@ export default async function DashboardPage() {
               matchPercent={m.match_percent ?? 0}
               reasoning={m.reasoning ?? ""}
               initialAction={latestActionByJob.get(m.job_id) ?? null}
+              initialBullets={bulletsByJob.get(m.job_id) ?? []}
             />
           ))}
         </ul>

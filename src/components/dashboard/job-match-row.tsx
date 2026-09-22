@@ -2,7 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { recordJobInteraction } from "@/app/dashboard/actions";
+import {
+  recordJobInteraction,
+  generateBulletsForJob,
+} from "@/app/dashboard/actions";
+
+type Bullet = { bullet_text: string; category: string };
 
 type JobMatchRowProps = {
   jobId: string;
@@ -13,6 +18,7 @@ type JobMatchRowProps = {
   matchPercent: number;
   reasoning: string;
   initialAction?: string | null;
+  initialBullets?: Bullet[];
 };
 
 export function JobMatchRow({
@@ -24,9 +30,13 @@ export function JobMatchRow({
   matchPercent,
   reasoning,
   initialAction,
+  initialBullets,
 }: JobMatchRowProps) {
   const [action, setAction] = useState(initialAction ?? null);
   const [isPending, startTransition] = useTransition();
+  const [bullets, setBullets] = useState<Bullet[]>(initialBullets ?? []);
+  const [isGenerating, startGenerating] = useTransition();
+  const [bulletError, setBulletError] = useState<string | null>(null);
 
   function act(next: "save" | "dismiss" | "apply") {
     setAction(next);
@@ -35,6 +45,20 @@ export function JobMatchRow({
         await recordJobInteraction(jobId, next);
       } catch {
         setAction(initialAction ?? null);
+      }
+    });
+  }
+
+  function handleGenerateBullets() {
+    setBulletError(null);
+    startGenerating(async () => {
+      try {
+        const result = await generateBulletsForJob(jobId);
+        setBullets(result);
+      } catch (e) {
+        setBulletError(
+          e instanceof Error ? e.message : "Failed to generate bullets"
+        );
       }
     });
   }
@@ -82,6 +106,35 @@ export function JobMatchRow({
           Dismiss
         </Button>
       </div>
+
+      {action === "apply" && (
+        <div className="mt-3 border-t pt-3">
+          {bullets.length === 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isGenerating}
+              onClick={handleGenerateBullets}
+            >
+              {isGenerating ? "Writing…" : "Generate resume bullets"}
+            </Button>
+          ) : (
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {bullets.map((b, i) => (
+                <li key={i}>
+                  {b.bullet_text}{" "}
+                  <span className="text-muted-foreground/60">
+                    ({b.category})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {bulletError && (
+            <p className="mt-1 text-xs text-destructive">{bulletError}</p>
+          )}
+        </div>
+      )}
     </li>
   );
 }

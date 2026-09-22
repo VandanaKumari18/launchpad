@@ -14,6 +14,7 @@ import {
   buildWeeklyBriefHtml,
   weeklyBriefSubject,
 } from "@/lib/weekly-brief";
+import { generateResumeBullets } from "@/lib/resume-bullets";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -452,4 +453,45 @@ export async function sendWeeklyBrief() {
   });
 
   revalidatePath("/dashboard");
+}
+
+export async function generateBulletsForJob(jobId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("title, description")
+    .eq("id", jobId)
+    .single();
+
+  if (!job) throw new Error("Job not found");
+
+  const { data: achievements } = await supabase
+    .from("achievements")
+    .select("title, description")
+    .eq("user_id", user.id);
+
+  const bullets = await generateResumeBullets(
+    achievements ?? [],
+    job.title,
+    job.description ?? ""
+  );
+
+  if (bullets.length > 0) {
+    await supabase.from("resume_bullets").insert(
+      bullets.map((b) => ({
+        user_id: user.id,
+        job_id: jobId,
+        bullet_text: b.bullet_text,
+        category: b.category,
+      }))
+    );
+  }
+
+  revalidatePath("/dashboard");
+  return bullets;
 }
