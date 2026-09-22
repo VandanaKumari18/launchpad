@@ -1,14 +1,68 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { searchJobs } from "@/lib/adzuna";
-import { scoreJobMatch } from "@/lib/job-matching";
-import { analyzeSkillGaps } from "@/lib/skill-gaps";
-import { draftOutreachMessage } from "@/lib/network-nudges";
-import { computeCareerScore } from "@/lib/career-score";
-import { detectBlockerPatterns } from "@/lib/blocker-patterns";
-import { createResendClient, BRIEF_FROM_ADDRESS } from "@/lib/resend";
-import { buildWeeklyBriefHtml, weeklyBriefSubject } from "@/lib/weekly-brief";
+import { createGroqClient, GROQ_MODEL } from "@/lib/groq";
+import {
+  getAgentState,
+  toolScanJobs,
+  toolDraftNudges,
+  toolAnalyzeSkillGaps,
+  toolSendWeeklyBrief,
+} from "@/lib/agent-tools";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from "groq-sdk/resources/chat/completions";
 
-const RENUDGE_AFTER_DAYS = 14;
+const MAX_STEPS = 6;
+
+const TOOLS: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "scan_jobs",
+      description:
+        "Search the job market for the user's target role and score every posting against their profile. Call this if it's been a while since the last scan, or there's no job data on file yet. Skip it if a scan already ran recently this cycle and nothing has changed.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "draft_network_nudges",
+      description:
+        "Draft AI reconnect messages for network contacts who are new or overdue (14+ days since last contact). Call this if the state summary shows overdue contacts. Skip it if there are none.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "analyze_skill_gaps",
+      description:
+        "Compare the user's skills against scanned job postings to find gaps. Only useful if job postings have been scanned (call scan_jobs first if none exist yet, or skip this if there's nothing to compare against).",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_weekly_brief",
+      description:
+        "Compute the current career score and email the user the full weekly brief (top job matches, pending nudges, skill gaps, activity summary). This should normally be the LAST action of the cycle, called once, after any scanning/drafting/analysis you decided to do.",
+      parameters: { type: "object", properties: {}, required: [] },
+    },
+  },
+];
+
+const SYSTEM_PROMPT = `You are the autonomous agent behind Launchpad, a career-progress product. You run
+periodically (weekly, on a schedule) for one user at a time with no human telling you what to do.
+
+You will be given a snapshot of this user's current state. Decide which of the available tools are
+actually warranted this cycle, based on that state — you are not required to call all of them, and
+you should not call one that clearly has nothing to do (e.g. skip draft_network_nudges if no contacts
+are overdue). Call tools in whatever order makes sense, reading the state to inform your choices.
+send_weekly_brief should normally be your last call, once, after you've done any scanning/drafting/
+analysis you decided was needed. Do not call the same tool twice in one cycle. When you have nothing
+more to do, stop calling tools and give a one-sentence summary of what you did and why.`;
 
 export type AgentCycleResult = {
   userId: string;
@@ -17,18 +71,18 @@ export type AgentCycleResult = {
   skillGapsFound: number;
   score: number;
   briefSent: boolean;
+  toolsCalled: { name: string; result: string }[];
+  agentSummary: string;
   error?: string;
 };
 
 /**
- * The full autonomous cycle for one user: scan jobs, score them, draft
- * overdue network nudges, refresh skill gaps, compute the career score,
- * and email the weekly brief. Everything a human would otherwise trigger
- * by clicking five separate buttons over the course of a week.
- *
- * Runs on the admin (service-role) client since it has no user session —
- * it's invoked by the cron route for every onboarded user, not by a
- * logged-in visitor.
+ * The agent's decision loop for one user: the LLM is given the user's current
+ * state and a toolset, and DECIDES which actions are warranted this cycle and
+ * in what order — this file does not hardcode "always do A then B then C".
+ * Each tool call has a real side effect (writes to the DB, calls external
+ * APIs, sends an email) and its result is fed back to the model before it
+ * decides what to do next.
  */
 export async function runAgentCycleForUser(
   admin: SupabaseClient,
@@ -50,280 +104,119 @@ export async function runAgentCycleForUser(
       skillGapsFound: 0,
       score: 0,
       briefSent: false,
+      toolsCalled: [],
+      agentSummary: "",
       error: "Profile not onboarded",
     };
   }
 
-  let jobsScanned = 0;
+  const stateSummary = await getAgentState(admin, userId, profile);
+  const groq = createGroqClient();
 
-  // 1. Scan + score jobs, if a target role is set.
-  if (profile.target_role) {
-    try {
-      const jobs = await searchJobs({
-        what: profile.target_role,
-        where: profile.city ?? "bangalore",
-        resultsPerPage: 10,
-      });
+  const messages: ChatCompletionMessageParam[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: `Current state for this user:\n\n${stateSummary}` },
+  ];
 
-      for (const job of jobs) {
-        const { data: jobRow } = await admin
-          .from("jobs")
-          .upsert(
-            {
-              external_id: job.external_id,
-              title: job.title,
-              company: job.company,
-              location: job.location,
-              salary_min: job.salary_min,
-              salary_max: job.salary_max,
-              description: job.description,
-              url: job.url,
-              posted_date: job.posted_date,
-            },
-            { onConflict: "external_id" }
-          )
-          .select("id")
-          .single();
-
-        if (!jobRow) continue;
-
-        try {
-          const score = await scoreJobMatch(profile, job);
-          await admin.from("job_matches").upsert(
-            {
-              user_id: userId,
-              job_id: jobRow.id,
-              match_percent: score.match_percent,
-              reasoning: score.reasoning,
-              computed_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id,job_id" }
-          );
-          jobsScanned += 1;
-        } catch (error) {
-          console.error(`[agent-cycle] scoreJobMatch failed for ${userId}`, error);
-        }
-      }
-    } catch (error) {
-      console.error(`[agent-cycle] job scan failed for ${userId}`, error);
-    }
-  }
-
-  // 2. Draft outreach for contacts who are new or overdue.
-  let nudgesDrafted = 0;
-  const contacts: { name: string; linkedin_url?: string }[] = Array.isArray(
-    profile.network_contacts
-  )
-    ? profile.network_contacts
-    : [];
-
-  if (contacts.length > 0) {
-    const { data: existingNudges } = await admin
-      .from("network_nudges")
-      .select("contact_name, status, last_contacted")
-      .eq("user_id", userId);
-
-    const existingByName = new Map(
-      (existingNudges ?? []).map((n) => [n.contact_name, n])
-    );
-
-    for (const contact of contacts) {
-      if (!contact.name) continue;
-      const existing = existingByName.get(contact.name);
-      const isDue = isNudgeDue(existing);
-      if (!isDue) continue;
-
-      try {
-        const message = await draftOutreachMessage({
-          contactName: contact.name,
-          userName: profile.name ?? null,
-          targetRole: profile.target_role ?? null,
-          timeline: profile.timeline ?? null,
-          tonePreference: profile.tone_preference ?? null,
-        });
-
-        await admin.from("network_nudges").upsert(
-          {
-            user_id: userId,
-            contact_name: contact.name,
-            contact_url: contact.linkedin_url ?? null,
-            suggested_message: message,
-            status: "pending",
-          },
-          { onConflict: "user_id,contact_name" }
-        );
-        nudgesDrafted += 1;
-      } catch (error) {
-        console.error(`[agent-cycle] draftOutreachMessage failed for ${userId}`, error);
-      }
-    }
-  }
-
-  // 3. Refresh skill gaps against whatever jobs are on file.
-  let skillGapsFound = 0;
-  try {
-    const { data: jobMatchRows } = await admin
-      .from("job_matches")
-      .select("jobs(description)")
-      .eq("user_id", userId);
-
-    const descriptions = (jobMatchRows ?? [])
-      .map(
-        (m) => (m.jobs as unknown as { description: string } | null)?.description
-      )
-      .filter((d): d is string => Boolean(d));
-
-    if (descriptions.length > 0) {
-      const gaps = await analyzeSkillGaps(
-        Array.isArray(profile.skills_list) ? profile.skills_list : [],
-        descriptions
-      );
-
-      await admin.from("skill_gaps").delete().eq("user_id", userId);
-      if (gaps.length > 0) {
-        await admin.from("skill_gaps").insert(
-          gaps.map((g) => ({
-            user_id: userId,
-            skill_name: g.skill_name,
-            user_level: g.user_level,
-            required_level: g.required_level,
-            prevalence: g.prevalence,
-          }))
-        );
-      }
-      skillGapsFound = gaps.length;
-    }
-  } catch (error) {
-    console.error(`[agent-cycle] skill gap analysis failed for ${userId}`, error);
-  }
-
-  // 4. Compute the career score from everything now on file.
-  const [{ data: achievements }, { data: jobMatches }, { data: jobInteractions }] =
-    await Promise.all([
-      admin.from("achievements").select("id").eq("user_id", userId),
-      admin.from("job_matches").select("*, jobs(*)").eq("user_id", userId),
-      admin
-        .from("job_interactions")
-        .select("action, jobs(location)")
-        .eq("user_id", userId),
-    ]);
-
-  const avgMatch = jobMatches?.length
-    ? jobMatches.reduce((sum, m) => sum + (m.match_percent ?? 0), 0) /
-      jobMatches.length
-    : null;
-
-  const score = computeCareerScore({
-    achievementCount: achievements?.length ?? 0,
-    avgJobMatchPercent: avgMatch,
-    networkContactCount: contacts.length,
-    skillsCount: Array.isArray(profile.skills_list) ? profile.skills_list.length : 0,
-    hasTimeline: Boolean(profile.timeline),
-    hasYearsExperience: profile.years_experience != null,
-  });
-
-  const blockerPatterns = detectBlockerPatterns(
-    (jobInteractions ?? []).map((i) => ({
-      action: i.action,
-      location: (i.jobs as unknown as { location: string } | null)?.location ?? "",
-    }))
-  );
-
-  // 5. Send the weekly brief and archive the score.
+  const totals = { jobsScanned: 0, nudgesDrafted: 0, skillGapsFound: 0 };
+  const toolsCalled: { name: string; result: string }[] = [];
+  let score = 0;
   let briefSent = false;
-  try {
-    const { data: pendingNudges } = await admin
-      .from("network_nudges")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("status", "pending");
+  const calledAlready = new Set<string>();
 
-    const { data: skillGaps } = await admin
-      .from("skill_gaps")
-      .select("*")
-      .eq("user_id", userId)
-      .order("prevalence", { ascending: false });
-
-    const { data: lastBrief } = await admin
-      .from("briefs")
-      .select("score")
-      .eq("user_id", userId)
-      .order("sent_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const weekOf = new Date().toISOString().slice(0, 10);
-    const html = buildWeeklyBriefHtml({
-      userName: profile.name ?? null,
-      targetRole: profile.target_role ?? null,
-      timeline: profile.timeline ?? null,
-      score,
-      previousScore: lastBrief?.score ?? null,
-      topJobMatches: (jobMatches ?? []).slice(0, 2).map((m) => ({
-        title: m.jobs?.title ?? "Untitled role",
-        company: m.jobs?.company ?? "Unknown",
-        matchPercent: m.match_percent ?? 0,
-        reasoning: m.reasoning ?? "",
-        url: m.jobs?.url ?? "#",
-      })),
-      pendingNudges: (pendingNudges ?? []).slice(0, 2).map((n) => ({
-        contactName: n.contact_name,
-        suggestedMessage: n.suggested_message ?? "",
-      })),
-      blockerPatterns,
-      skillGaps: (skillGaps ?? []).map((g) => ({
-        skillName: g.skill_name,
-        prevalence: g.prevalence ?? 0,
-      })),
-      activity: {
-        jobsScanned,
-        matchesFound: jobMatches?.length ?? 0,
-        skillGapsFound,
-        nudgesDrafted,
-        achievementsLogged: achievements?.length ?? 0,
-      },
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages,
+      tools: TOOLS,
+      tool_choice: "auto",
     });
 
-    const resend = createResendClient();
-    const { error: sendError } = await resend.emails.send({
-      from: BRIEF_FROM_ADDRESS,
-      to: profile.email,
-      subject: weeklyBriefSubject(weekOf),
-      html,
+    const message = completion.choices[0]?.message;
+    if (!message) break;
+
+    messages.push({
+      role: "assistant",
+      content: message.content ?? "",
+      tool_calls: message.tool_calls,
     });
 
-    if (!sendError) {
-      await admin.from("briefs").insert({
-        user_id: userId,
-        week_of: weekOf,
-        score: score.overall,
-        email_html: html,
-        sent_at: new Date().toISOString(),
-      });
-      briefSent = true;
+    if (!message.tool_calls || message.tool_calls.length === 0) {
+      if (message.content) {
+        toolsCalled.push({ name: "(reasoning)", result: message.content });
+      }
+      break;
     }
-  } catch (error) {
-    console.error(`[agent-cycle] weekly brief failed for ${userId}`, error);
+
+    for (const call of message.tool_calls) {
+      const name = call.function.name;
+      let toolResultText: string;
+
+      if (calledAlready.has(name)) {
+        toolResultText = `Already called this cycle — skipping duplicate call.`;
+      } else {
+        calledAlready.add(name);
+        try {
+          switch (name) {
+            case "scan_jobs": {
+              const r = await toolScanJobs(admin, userId, profile);
+              totals.jobsScanned = (r.data.jobsScanned as number) ?? 0;
+              toolResultText = r.summary;
+              break;
+            }
+            case "draft_network_nudges": {
+              const r = await toolDraftNudges(admin, userId, profile);
+              totals.nudgesDrafted = (r.data.nudgesDrafted as number) ?? 0;
+              toolResultText = r.summary;
+              break;
+            }
+            case "analyze_skill_gaps": {
+              const r = await toolAnalyzeSkillGaps(admin, userId, profile);
+              totals.skillGapsFound = (r.data.skillGapsFound as number) ?? 0;
+              toolResultText = r.summary;
+              break;
+            }
+            case "send_weekly_brief": {
+              const r = await toolSendWeeklyBrief(admin, userId, profile, totals);
+              briefSent = (r.data.briefSent as boolean) ?? false;
+              score = (r.data.score as number) ?? 0;
+              toolResultText = r.summary;
+              break;
+            }
+            default:
+              toolResultText = `Unknown tool: ${name}`;
+          }
+        } catch (error) {
+          toolResultText = `Tool failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`;
+          console.error(`[agent-cycle] tool ${name} failed for ${userId}`, error);
+        }
+        toolsCalled.push({ name, result: toolResultText });
+      }
+
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: toolResultText,
+      });
+    }
   }
+
+  const agentSummary =
+    [...toolsCalled].reverse().find((t) => t.name === "(reasoning)")?.result ??
+    (toolsCalled.length > 0
+      ? `Ran: ${toolsCalled.map((t) => t.name).join(", ")}.`
+      : "Decided no action was needed this cycle.");
 
   return {
     userId,
-    jobsScanned,
-    nudgesDrafted,
-    skillGapsFound,
-    score: score.overall,
+    jobsScanned: totals.jobsScanned,
+    nudgesDrafted: totals.nudgesDrafted,
+    skillGapsFound: totals.skillGapsFound,
+    score,
     briefSent,
+    toolsCalled: toolsCalled.filter((t) => t.name !== "(reasoning)"),
+    agentSummary,
   };
-}
-
-function isNudgeDue(existing?: {
-  status: string;
-  last_contacted: string | null;
-}): boolean {
-  if (!existing) return true;
-  if (existing.status === "pending") return false;
-  if (!existing.last_contacted) return true;
-  const daysSince =
-    (Date.now() - new Date(existing.last_contacted).getTime()) / 86_400_000;
-  return daysSince >= RENUDGE_AFTER_DAYS;
 }
