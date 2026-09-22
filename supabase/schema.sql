@@ -109,7 +109,7 @@ create table if not exists friday_logs (
 
 create table if not exists jobs (
   id uuid primary key default gen_random_uuid(),
-  external_id text,
+  external_id text unique,
   title text,
   company text,
   location text,
@@ -127,7 +127,8 @@ create table if not exists job_matches (
   job_id uuid not null references jobs (id) on delete cascade,
   match_percent int check (match_percent between 0 and 100),
   reasoning text,
-  computed_at timestamptz not null default now()
+  computed_at timestamptz not null default now(),
+  unique (user_id, job_id)
 );
 
 create table if not exists job_interactions (

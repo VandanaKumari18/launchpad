@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { findJobMatches } from "@/app/dashboard/actions";
+import { Button } from "@/components/ui/button";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -26,6 +28,12 @@ export default async function DashboardPage() {
     .select("*")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
+
+  const { data: jobMatches } = await supabase
+    .from("job_matches")
+    .select("*, jobs(*)")
+    .eq("user_id", user.id)
+    .order("match_percent", { ascending: false });
 
   return (
     <main className="mx-auto max-w-xl py-10">
@@ -66,9 +74,50 @@ export default async function DashboardPage() {
         </ul>
       )}
 
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-lg font-medium">
+          Job Matches {jobMatches?.length ? `(${jobMatches.length})` : ""}
+        </h2>
+        <form action={findJobMatches}>
+          <Button type="submit" size="sm" variant="outline">
+            Scan for jobs
+          </Button>
+        </form>
+      </div>
+      {!jobMatches?.length ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          None yet. Click &quot;Scan for jobs&quot; to search for roles
+          matching your target role and city.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-3">
+          {jobMatches.map((m) => (
+            <li key={m.id} className="rounded-md border p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <a
+                  href={m.jobs?.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium underline"
+                >
+                  {m.jobs?.title} — {m.jobs?.company}
+                </a>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  Match: {m.match_percent}%
+                </span>
+              </div>
+              <p className="mt-1 text-muted-foreground">{m.jobs?.location}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {m.reasoning}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <p className="mt-8 text-sm text-muted-foreground">
-        This is a placeholder. Job matching, career score, and the weekly
-        brief land in later phases of the build.
+        This is a placeholder. Career score and the weekly brief land in
+        later phases of the build.
       </p>
     </main>
   );
