@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import {
   recordJobInteraction,
   generateBulletsForJob,
+  generateInterviewPrepForJob,
 } from "@/app/dashboard/actions";
 
 type Bullet = { bullet_text: string; category: string };
+type Question = { question: string; sample_answer: string };
 
 type JobMatchRowProps = {
   jobId: string;
@@ -19,6 +21,7 @@ type JobMatchRowProps = {
   reasoning: string;
   initialAction?: string | null;
   initialBullets?: Bullet[];
+  initialQuestions?: Question[];
 };
 
 export function JobMatchRow({
@@ -31,12 +34,18 @@ export function JobMatchRow({
   reasoning,
   initialAction,
   initialBullets,
+  initialQuestions,
 }: JobMatchRowProps) {
   const [action, setAction] = useState(initialAction ?? null);
   const [isPending, startTransition] = useTransition();
   const [bullets, setBullets] = useState<Bullet[]>(initialBullets ?? []);
   const [isGenerating, startGenerating] = useTransition();
   const [bulletError, setBulletError] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Question[]>(
+    initialQuestions ?? []
+  );
+  const [isPrepping, startPrepping] = useTransition();
+  const [prepError, setPrepError] = useState<string | null>(null);
 
   function act(next: "save" | "dismiss" | "apply") {
     setAction(next);
@@ -58,6 +67,20 @@ export function JobMatchRow({
       } catch (e) {
         setBulletError(
           e instanceof Error ? e.message : "Failed to generate bullets"
+        );
+      }
+    });
+  }
+
+  function handleGenerateQuestions() {
+    setPrepError(null);
+    startPrepping(async () => {
+      try {
+        const result = await generateInterviewPrepForJob(jobId);
+        setQuestions(result);
+      } catch (e) {
+        setPrepError(
+          e instanceof Error ? e.message : "Failed to generate questions"
         );
       }
     });
@@ -133,6 +156,37 @@ export function JobMatchRow({
           {bulletError && (
             <p className="mt-1 text-xs text-destructive">{bulletError}</p>
           )}
+
+          <div className="mt-3 border-t pt-3">
+            {questions.length === 0 ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isPrepping}
+                onClick={handleGenerateQuestions}
+              >
+                {isPrepping ? "Preparing…" : "Interview prep"}
+              </Button>
+            ) : (
+              <ul className="space-y-2">
+                {questions.map((q, i) => (
+                  <li key={i} className="text-xs">
+                    <div className="font-medium text-foreground">
+                      {q.question}
+                    </div>
+                    {q.sample_answer && (
+                      <p className="mt-0.5 text-muted-foreground">
+                        {q.sample_answer}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {prepError && (
+              <p className="mt-1 text-xs text-destructive">{prepError}</p>
+            )}
+          </div>
         </div>
       )}
     </li>

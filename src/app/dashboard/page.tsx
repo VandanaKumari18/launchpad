@@ -12,6 +12,7 @@ import { CareerScoreCard } from "@/components/dashboard/career-score-card";
 import { JobMatchRow } from "@/components/dashboard/job-match-row";
 import { NetworkNudgeRow } from "@/components/dashboard/network-nudge-row";
 import { PromotionCaseSection } from "@/components/dashboard/promotion-case-section";
+import { FridayLogForm } from "@/components/dashboard/friday-log-form";
 import { detectBlockerPatterns } from "@/lib/blocker-patterns";
 
 export default async function DashboardPage() {
@@ -77,6 +78,21 @@ export default async function DashboardPage() {
     bulletsByJob.set(b.job_id, list);
   }
 
+  const { data: interviewPrep } = await supabase
+    .from("interview_prep")
+    .select("job_id, question, sample_answer")
+    .eq("user_id", user.id);
+
+  const questionsByJob = new Map<
+    string,
+    { question: string; sample_answer: string }[]
+  >();
+  for (const q of interviewPrep ?? []) {
+    const list = questionsByJob.get(q.job_id) ?? [];
+    list.push({ question: q.question, sample_answer: q.sample_answer ?? "" });
+    questionsByJob.set(q.job_id, list);
+  }
+
   const blockerPatterns = detectBlockerPatterns(
     (jobInteractions ?? []).map((i) => ({
       action: i.action,
@@ -135,6 +151,11 @@ export default async function DashboardPage() {
           breakdown={scoreBreakdown}
           previousScore={briefs?.[0]?.score ?? null}
         />
+      </div>
+
+      <h2 className="mt-8 text-lg font-medium">Friday Log</h2>
+      <div className="mt-3">
+        <FridayLogForm />
       </div>
 
       <h2 className="mt-8 text-lg font-medium">
@@ -196,6 +217,7 @@ export default async function DashboardPage() {
               reasoning={m.reasoning ?? ""}
               initialAction={latestActionByJob.get(m.job_id) ?? null}
               initialBullets={bulletsByJob.get(m.job_id) ?? []}
+              initialQuestions={questionsByJob.get(m.job_id) ?? []}
             />
           ))}
         </ul>

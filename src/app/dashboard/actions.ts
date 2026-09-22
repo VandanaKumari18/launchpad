@@ -16,6 +16,8 @@ import {
 } from "@/lib/weekly-brief";
 import { generateResumeBullets } from "@/lib/resume-bullets";
 import { generatePromotionCase } from "@/lib/promotion-case";
+import { generateInterviewQuestions } from "@/lib/interview-prep";
+import { parseFridayLogAchievements } from "@/lib/friday-log";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -574,4 +576,100 @@ export async function updatePromotionCaseStatus(
   if (error) throw new Error(`Failed to update case: ${error.message}`);
 
   revalidatePath("/dashboard");
+}
+
+export async function generateInterviewPrepForJob(jobId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("title, description")
+    .eq("id", jobId)
+    .single();
+  if (!job) throw new Error("Job not found");
+
+  const { data: achievements } = await supabase
+    .from("achievements")
+    .select("title, description")
+    .eq("user_id", user.id);
+
+  const questions = await generateInterviewQuestions(
+    achievements ?? [],
+    job.title,
+    job.description ?? ""
+  );
+
+  if (questions.length > 0) {
+    await supabase.from("interview_prep").insert(
+      questions.map((q) => ({
+        user_id: user.id,
+        job_id: jobId,
+        question: q.question,
+        sample_answer: q.sample_answer,
+        prepared: false,
+      }))
+    );
+  }
+
+  revalidatePath("/dashboard");
+  return questions;
+}
+
+export async function submitFridayLog(params: {
+  achievement: string;
+  leadership: string;
+  impact: string;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const parsed = await parseFridayLogAchievements(params);
+
+  const weekOf = new Date();
+  const day = weekOf.getDay();
+  const diffToFriday = (5 - day + 7) % 7;
+  weekOf.setDate(weekOf.getDate() + diffToFriday);
+  const weekOfStr = weekOf.toISOString().slice(0, 10);
+
+  const { data: logRow, error: logError } = await supabase
+    .from("friday_logs")
+    .insert({
+      user_id: user.id,
+      week_of: weekOfStr,
+      achievement: params.achievement,
+      leadership: params.leadership,
+      impact: params.impact,
+      parsed_achievements: parsed,
+    })
+    .select("id")
+    .single();
+
+  if (logError) throw new Error(`Failed to save log: ${logError.message}`);
+
+  if (parsed.length > 0) {
+    await supabase.from("achievements").insert(
+      parsed.map((a) => ({
+        user_id: user.id,
+        title: a.title,
+        description: a.description,
+        category: a.category,
+        source: "friday_log",
+        impact_metric: a.impact_metric,
+        impact_number: a.impact_number,
+        team_size: a.team_size,
+        confidence: a.confidence,
+        friday_log_id: logRow.id,
+      }))
+    );
+  }
+
+  revalidatePath("/dashboard");
+  return parsed;
 }
