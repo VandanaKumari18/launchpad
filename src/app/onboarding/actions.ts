@@ -32,7 +32,7 @@ export async function completeOnboarding(formData: FormData) {
     .from("users")
     .update({
       name: formData.get("name")?.toString() ?? null,
-      current_role: formData.get("current_role")?.toString() ?? null,
+      current_job_title: formData.get("current_role")?.toString() ?? null,
       current_company: formData.get("current_company")?.toString() ?? null,
       years_experience: formData.get("years_experience")
         ? Number(formData.get("years_experience"))

@@ -15,7 +15,7 @@ create table if not exists users (
   name text,
   email text,
   city text,
-  current_role text,
+  current_job_title text,
   current_company text,
   years_experience int,
   target_role text,
