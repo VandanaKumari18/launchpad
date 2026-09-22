@@ -11,6 +11,7 @@ import { computeCareerScore } from "@/lib/career-score";
 import { CareerScoreCard } from "@/components/dashboard/career-score-card";
 import { JobMatchRow } from "@/components/dashboard/job-match-row";
 import { NetworkNudgeRow } from "@/components/dashboard/network-nudge-row";
+import { PromotionCaseSection } from "@/components/dashboard/promotion-case-section";
 import { detectBlockerPatterns } from "@/lib/blocker-patterns";
 
 export default async function DashboardPage() {
@@ -86,6 +87,12 @@ export default async function DashboardPage() {
 
   const { data: networkNudges } = await supabase
     .from("network_nudges")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
+
+  const { data: promotionCases } = await supabase
+    .from("promotion_cases")
     .select("*")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
@@ -274,6 +281,10 @@ export default async function DashboardPage() {
           ))}
         </ul>
       )}
+
+      <div className="mt-8">
+        <PromotionCaseSection initialCases={promotionCases ?? []} />
+      </div>
 
       <div className="mt-8 flex items-center justify-between">
         <h2 className="text-lg font-medium">

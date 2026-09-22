@@ -15,6 +15,7 @@ import {
   weeklyBriefSubject,
 } from "@/lib/weekly-brief";
 import { generateResumeBullets } from "@/lib/resume-bullets";
+import { generatePromotionCase } from "@/lib/promotion-case";
 import { revalidatePath } from "next/cache";
 
 export async function findJobMatches() {
@@ -494,4 +495,83 @@ export async function generateBulletsForJob(jobId: string) {
 
   revalidatePath("/dashboard");
   return bullets;
+}
+
+export async function createPromotionCase(params: {
+  company: string;
+  targetRole: string;
+  timeline: string;
+  internalJobDescription: string;
+}) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  if (!params.company || !params.targetRole || !params.internalJobDescription) {
+    throw new Error("Company, target role, and job description are required");
+  }
+
+  const { data: profile } = await supabase
+    .from("users")
+    .select("current_job_title")
+    .eq("id", user.id)
+    .single();
+
+  const { data: achievements } = await supabase
+    .from("achievements")
+    .select("title, description")
+    .eq("user_id", user.id);
+
+  const result = await generatePromotionCase({
+    achievements: achievements ?? [],
+    currentRole: profile?.current_job_title ?? null,
+    company: params.company,
+    targetRole: params.targetRole,
+    timeline: params.timeline,
+    internalJobDescription: params.internalJobDescription,
+  });
+
+  const { data: inserted, error } = await supabase
+    .from("promotion_cases")
+    .insert({
+      user_id: user.id,
+      company: params.company,
+      target_role: params.targetRole,
+      readiness_score: result.readiness_score,
+      strengths: result.strengths,
+      gaps: result.gaps,
+      timeline_recommendation: result.timeline_recommendation,
+      email_template: result.email_template,
+      status: "draft",
+    })
+    .select()
+    .single();
+
+  if (error) throw new Error(`Failed to save promotion case: ${error.message}`);
+
+  revalidatePath("/dashboard");
+  return inserted;
+}
+
+export async function updatePromotionCaseStatus(
+  caseId: string,
+  status: "sent" | "accepted" | "rejected"
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const { error } = await supabase
+    .from("promotion_cases")
+    .update({ status })
+    .eq("id", caseId)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(`Failed to update case: ${error.message}`);
+
+  revalidatePath("/dashboard");
 }
